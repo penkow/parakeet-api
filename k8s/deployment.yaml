@@ -1,0 +1,66 @@
+# No image registry needed: a stock python image, the app code from a ConfigMap,
+# and a virtualenv that the init container builds once on the PVC (app/install.sh, first start takes 5-15 min).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: parakeet
+  labels: {app: parakeet}
+spec:
+  replicas: 1                 # one GPU job at a time; scale with more GPUs, not replicas on one GPU
+  strategy: {type: Recreate}  # the PVC is ReadWriteOnce
+  selector:
+    matchLabels: {app: parakeet}
+  template:
+    metadata:
+      labels: {app: parakeet}
+    spec:
+      enableServiceLinks: false
+      initContainers:
+      - name: install
+        image: docker.io/library/python:3.12-bookworm
+        command: [bash, /app/install.sh]
+        resources:
+          requests: {cpu: 500m, memory: 1Gi}
+          limits: {memory: 4Gi}
+        volumeMounts:
+        - {name: state, mountPath: /state}
+        - {name: app, mountPath: /app, readOnly: true}
+      containers:
+      - name: parakeet
+        image: docker.io/library/python:3.12-bookworm
+        command: [bash, /app/start.sh]
+        env:
+        - {name: PYTHON, value: /state/venv/bin/python}
+        - {name: PYTHONUNBUFFERED, value: "1"}
+        - {name: NVIDIA_VISIBLE_DEVICES, value: all}
+        - {name: NVIDIA_DRIVER_CAPABILITIES, value: "compute,utility"}
+        - {name: HF_HOME, value: /state/hf}
+        - {name: TORCH_HOME, value: /state/torch}
+        - {name: PARAKEET_MODEL, value: nvidia/parakeet-tdt-0.6b-v3}
+        - {name: PARAKEET_LOCAL_ATTN_AFTER, value: "480"}
+        # Optional bearer token: create the secret (see README) to turn auth on.
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef: {name: parakeet-api-key, key: API_KEY, optional: true}
+        ports:
+        - {name: http, containerPort: 8000}
+        startupProbe:
+          httpGet: {path: /health, port: http}
+          periodSeconds: 5
+          failureThreshold: 60
+        readinessProbe:
+          httpGet: {path: /health, port: http}
+          periodSeconds: 10
+        resources:
+          requests: {cpu: "1", memory: 4Gi}
+          limits:
+            memory: 12Gi
+            nvidia.com/gpu: 1
+        volumeMounts:
+        - {name: state, mountPath: /state}
+        - {name: app, mountPath: /app, readOnly: true}
+      volumes:
+      - name: state
+        persistentVolumeClaim: {claimName: parakeet-state}
+      - name: app
+        configMap: {name: parakeet-app}

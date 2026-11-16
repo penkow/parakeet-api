@@ -1,0 +1,28 @@
+# Kubernetes install:  kubectl apply -k .
+# See README.md ("Kubernetes") for the options below.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: parakeet
+# nameSuffix: "-tts"               # optional: renames every object (parakeet-tts) and so changes the Knative URL
+
+resources:
+- k8s/namespace.yaml
+- k8s/pvc.yaml
+- k8s/deployment.yaml
+- k8s/service.yaml
+# - k8s/ingress.yaml                 # expose it outside the cluster (edit the host first)
+
+# The app code and requirements become a ConfigMap; editing them and re-applying restarts the pod.
+configMapGenerator:
+- name: parakeet-app
+  files:
+  - app/server.py
+  - app/index.html
+  - app/start.sh
+  - app/install.sh
+  - requirements.txt
+
+components:
+# (keep this order: knative first, so the nvidia-runtime patch also applies to the Knative Service)
+# - k8s/components/knative           # Knative Serving: scale to zero when idle, frees the GPU
+# - k8s/components/nvidia-runtime    # k3s / RKE2: GPU pods need runtimeClassName "nvidia"

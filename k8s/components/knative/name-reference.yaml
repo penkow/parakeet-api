@@ -1,0 +1,11 @@
+nameReference:
+- kind: ConfigMap
+  fieldSpecs:
+  - group: serving.knative.dev
+    kind: Service
+    path: spec/template/spec/volumes/configMap/name
+- kind: PersistentVolumeClaim
+  fieldSpecs:
+  - group: serving.knative.dev
+    kind: Service
+    path: spec/template/spec/volumes/persistentVolumeClaim/claimName

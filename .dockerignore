@@ -1,0 +1,6 @@
+.git
+k8s
+docker
+*.md
+.env
+data

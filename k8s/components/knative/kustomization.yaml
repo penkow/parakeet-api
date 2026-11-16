@@ -1,0 +1,20 @@
+# Replaces the Deployment + Service with a Knative Service that scales to zero when idle.
+# The container builds the virtualenv itself on its first start (app/install.sh).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+- knative-service.yaml
+patches:
+- patch: |
+    $patch: delete
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata: {name: parakeet}
+- patch: |
+    $patch: delete
+    apiVersion: v1
+    kind: Service
+    metadata: {name: parakeet}
+# let kustomize rewrite the hashed ConfigMap name inside the Knative Service
+configurations:
+- name-reference.yaml

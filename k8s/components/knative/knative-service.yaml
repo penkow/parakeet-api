@@ -1,0 +1,51 @@
+# Scales to zero 30 s after the last request, so the GPU is free for other workloads.
+# The first request after idle waits for the pod to start and load the model (~1-2 min).
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: parakeet
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/min-scale: "0"
+        autoscaling.knative.dev/max-scale: "1"
+        autoscaling.knative.dev/scale-to-zero-pod-retention-period: "30s"
+        # the very first start builds the virtualenv (app/install.sh), which takes longer than the 10 min default
+        serving.knative.dev/progress-deadline: "45m"
+    spec:
+      enableServiceLinks: false
+      timeoutSeconds: 600            # long files take a while
+      responseStartTimeoutSeconds: 300
+      containers:
+      - image: docker.io/library/python:3.12-bookworm
+        command: [bash, -c, "bash /app/install.sh && exec bash /app/start.sh"]
+        env:
+        - {name: PYTHON, value: /state/venv/bin/python}
+        - {name: PYTHONUNBUFFERED, value: "1"}
+        - {name: NVIDIA_VISIBLE_DEVICES, value: all}
+        - {name: NVIDIA_DRIVER_CAPABILITIES, value: "compute,utility"}
+        - {name: HF_HOME, value: /state/hf}
+        - {name: TORCH_HOME, value: /state/torch}
+        - {name: PARAKEET_MODEL, value: nvidia/parakeet-tdt-0.6b-v3}
+        - {name: PARAKEET_LOCAL_ATTN_AFTER, value: "480"}
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef: {name: parakeet-api-key, key: API_KEY, optional: true}
+        ports:
+        - containerPort: 8000
+        readinessProbe:
+          httpGet: {path: /health}
+        resources:
+          requests: {cpu: "1", memory: 4Gi}
+          limits:
+            memory: 12Gi
+            nvidia.com/gpu: 1
+        volumeMounts:
+        - {name: state, mountPath: /state}
+        - {name: app, mountPath: /app, readOnly: true}
+      volumes:
+      - name: state
+        persistentVolumeClaim: {claimName: parakeet-state}
+      - name: app
+        configMap: {name: parakeet-app}

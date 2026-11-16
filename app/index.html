@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parakeet</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --card: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #dcdcd6;
+    --accent: #2f5fd0; --accent-text: #ffffff; --danger: #b3261e; --ok: #1b7a43;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151515; --card: #1e1e1e; --text: #ececea; --muted: #9a9a94; --line: #34342f;
+      --accent: #6c93f0; --accent-text: #0e1626; --danger: #f2877f; --ok: #6fcf97;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  #drop { border: 2px dashed var(--line); border-radius: 10px; padding: 28px 16px; text-align: center;
+          cursor: pointer; color: var(--muted); }
+  #drop.over { border-color: var(--accent); color: var(--text); }
+  #drop strong { color: var(--text); }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); flex: 1 1 150px; }
+  select, input[type=text] { font: inherit; padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px;
+                              background: var(--bg); color: var(--text); }
+  .check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); flex: 1 1 100%; }
+  button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line);
+           background: var(--card); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  .actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; align-items: center; }
+  #status { color: var(--muted); font-size: 13px; }
+  #status.err { color: var(--danger); }
+  #status.ok { color: var(--ok); }
+  #fileinfo { margin-top: 10px; font-size: 13px; color: var(--muted); }
+  audio { width: 100%; margin-top: 10px; }
+  pre { white-space: pre-wrap; word-wrap: break-word; margin: 0; font: 14px/1.55 ui-monospace, Consolas, monospace; }
+  #result h2 { font-size: 14px; margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center; }
+  #result[hidden] { display: none; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Parakeet</h1>
+  <p class="sub">Transcribe audio or video (25 European languages, detected automatically). API: <code>POST /v1/audio/transcriptions</code> (OpenAI-compatible).</p>
+
+  <div class="card">
+    <div id="drop" tabindex="0" role="button" aria-label="Choose an audio file">
+      <strong>Drop a file here</strong> or click to choose<br>
+      <span>mp3, wav, m4a, mp4, ogg, flac, webm...</span>
+    </div>
+    <input id="file" type="file" accept="audio/*,video/*" hidden>
+    <div id="fileinfo"></div>
+    <audio id="player" controls hidden></audio>
+
+    <div class="row">
+      <label>Output
+        <select id="format">
+          <option value="text">Plain text</option>
+          <option value="srt">SRT subtitles</option>
+          <option value="vtt">WebVTT subtitles</option>
+          <option value="verbose_json">JSON with word timestamps</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="actions">
+      <button id="go" class="primary" disabled>Transcribe</button>
+      <button id="cancel" hidden>Cancel</button>
+      <span id="status"></span>
+    </div>
+    <div class="hint">The first request after a start can take a minute while the model loads.</div>
+  </div>
+
+  <div class="card" id="result" hidden>
+    <h2><span id="rinfo">Result</span>
+      <span><button id="copy">Copy</button> <button id="save">Download</button></span></h2>
+    <pre id="out"></pre>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let file = null, controller = null, outName = "transcript.txt", timer = null;
+
+function setFile(f) {
+  file = f;
+  $("go").disabled = !f;
+  $("fileinfo").textContent = f ? `${f.name} (${(f.size / 1048576).toFixed(1)} MB)` : "";
+  const p = $("player");
+  if (f) { p.src = URL.createObjectURL(f); p.hidden = false; } else { p.hidden = true; }
+}
+
+const drop = $("drop");
+drop.onclick = () => $("file").click();
+drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } };
+$("file").onchange = (e) => e.target.files[0] && setFile(e.target.files[0]);
+["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => e.dataTransfer.files[0] && setFile(e.dataTransfer.files[0]));
+
+function status(msg, cls) { const s = $("status"); s.textContent = msg; s.className = cls || ""; }
+
+function busy(on) {
+  $("go").disabled = on || !file;
+  $("cancel").hidden = !on;
+  clearInterval(timer);
+  if (on) {
+    const t0 = Date.now();
+    timer = setInterval(() => status(`Working... ${Math.round((Date.now() - t0) / 1000)}s`), 500);
+  }
+}
+
+$("cancel").onclick = () => controller && controller.abort();
+
+$("go").onclick = async () => {
+  const fmt = $("format").value;
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("model", "parakeet");
+  fd.append("response_format", fmt);
+  if (fmt === "verbose_json") fd.append("timestamp_granularities[]", "word");
+
+  controller = new AbortController();
+  busy(true);
+  const t0 = Date.now();
+  try {
+    const r = await fetch("v1/audio/transcriptions", { method: "POST", body: fd, signal: controller.signal });
+    const body = await r.text();
+    if (!r.ok) {
+      let msg = body;
+      try { msg = JSON.parse(body).error.message; } catch (_) {}
+      throw new Error(msg || `HTTP ${r.status}`);
+    }
+    let shown = body, ext = fmt === "text" ? "txt" : fmt;
+    if (fmt === "verbose_json") { shown = JSON.stringify(JSON.parse(body), null, 2); ext = "json"; }
+    $("out").textContent = shown;
+    $("rinfo").textContent = `Result (${((Date.now() - t0) / 1000).toFixed(1)}s)`;
+    $("result").hidden = false;
+    outName = file.name.replace(/\.[^.]+$/, "") + "." + ext;
+    busy(false);
+    status("Done", "ok");
+  } catch (e) {
+    busy(false);
+    status(e.name === "AbortError" ? "Cancelled" : e.message, e.name === "AbortError" ? "" : "err");
+  }
+};
+
+$("copy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("out").textContent); status("Copied", "ok"); }
+  catch (_) { status("Copy failed - select the text manually", "err"); }
+};
+$("save").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([$("out").textContent], { type: "text/plain" }));
+  a.download = outName;
+  a.click();
+};
+</script>
+</body>
+</html>

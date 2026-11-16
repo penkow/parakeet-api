@@ -1,0 +1,23 @@
+# Optional. Set the host and ingressClassName for your cluster, then enable it in kustomization.yaml.
+# Uploads can be large and transcription slow, so raise body size and timeouts on your ingress controller
+# (the annotations below are for ingress-nginx).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: parakeet
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "900"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "900"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: parakeet.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: parakeet
+            port: {name: http}

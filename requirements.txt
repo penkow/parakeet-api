@@ -1,0 +1,10 @@
+# Versions tested together (CUDA 12.8 wheels, Python 3.12).
+# nemo_toolkit[asr] brings the rest of NeMo's dependencies; torch is pinned so pip doesn't pick another build.
+nemo_toolkit[asr]==3.0.0
+torch==2.8.0
+torchaudio==2.8.0
+soundfile
+av==19.0.0
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32

@@ -1,0 +1,11 @@
+# Holds the Python environment (~15 GB: PyTorch, CUDA libraries, NeMo) and the model (~2.5 GB).
+# 30 Gi leaves room for a second model or a newer NeMo.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: parakeet-state
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 30Gi

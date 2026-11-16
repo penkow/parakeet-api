@@ -1,0 +1,4 @@
+# k3s and RKE2 register the NVIDIA runtime as RuntimeClass "nvidia" instead of making it the default.
+- op: add
+  path: /spec/template/spec/runtimeClassName
+  value: nvidia
