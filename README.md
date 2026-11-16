@@ -189,8 +189,8 @@ components:
 ```
 
 With Knative the URL comes from the service name (`<name>.<your-domain>`). To change it, set `nameSuffix`
-(uncomment it in `kustomization.yaml`): every object gets the suffix, so `nameSuffix: "-tts"` gives a service
-called `parakeet-tts`. The same trick lets you run a second copy next to the first (also change `namespace`).
+(uncomment it in `kustomization.yaml`): every object gets the suffix, so `nameSuffix: "-stt"` gives a service
+called `parakeet-stt`. The same trick lets you run a second copy next to the first (also change `namespace`).
 
 ### Expose it outside the cluster
 
