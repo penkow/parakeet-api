@@ -37,7 +37,7 @@ spec:
         - {name: HF_HOME, value: /state/hf}
         - {name: TORCH_HOME, value: /state/torch}
         - {name: PARAKEET_MODEL, value: nvidia/parakeet-tdt-0.6b-v3}
-        - {name: PARAKEET_LOCAL_ATTN_AFTER, value: "480"}
+        - {name: PARAKEET_LOCAL_ATTN_AFTER, value: "60"}
         # Optional bearer token: create the secret (see README) to turn auth on.
         - name: API_KEY
           valueFrom:

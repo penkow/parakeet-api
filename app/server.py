@@ -84,7 +84,7 @@ def _group_words(segments, words):
     return out
 
 
-def transcribe(audio):
+def _transcribe_full(audio):
     """Text, segment and word timestamps from one native pass. Returns a list of segments with their words."""
     with _lock:
         model = get_model()
@@ -226,3 +226,99 @@ async def transcriptions(request: Request, _=Depends(auth)):
         ],
         "words": [w for s in segs for w in s["words"]],
     }
+
+
+# Long files: NeMo's own buffered inference (overlapping fixed-size windows, constant memory) instead of one pass
+# over the whole file, whose conv front-end needs several GB of VRAM at 30 minutes.
+BUFFERED_AFTER = float(os.environ.get("PARAKEET_BUFFERED_AFTER", "120"))
+BUF_CHUNK = float(os.environ.get("PARAKEET_BUFFER_CHUNK", "20"))
+BUF_TOTAL = float(os.environ.get("PARAKEET_BUFFER_TOTAL", "40"))
+
+
+def _transcribe_buffered(audio):
+    """NeMo BatchedFrameASRTDT with word timestamps read from the per-token frame indices it already records.
+
+    Buffer `a` ends at real time (a+1)*chunk and the audio is right-aligned in it, so a token at encoder frame t
+    is at (a+1)*chunk - total + t*stride seconds. Only tokens in the buffer's middle window [s, s+chunk) are
+    kept; the windows of consecutive buffers are contiguous, so nothing is dropped or doubled."""
+    import copy, math
+    from omegaconf import open_dict
+    from nemo.collections.asr.parts.utils.streaming_utils import BatchedFrameASRTDT
+
+    class Timed(BatchedFrameASRTDT):
+        def tokens(self, tokens_per_chunk, delay, frames_per_buffer, stride):
+            self.infer_logits()
+            end_idx = self.frame_bufferer.signal_end_index[0]
+            s = frames_per_buffer - 1 - delay
+            out = []
+            for a, (pred, ts) in enumerate(zip(self.all_preds[0], self.all_timestamps[0])):
+                if a >= end_idx:
+                    break
+                for tok, t in zip(pred, ts["timestep"]):
+                    t = int(t)
+                    if s <= t < s + tokens_per_chunk:
+                        out.append((int(tok), (a + 1) * BUF_CHUNK - BUF_TOTAL + t * stride))
+            return out
+
+    with _lock:
+        model = get_model()
+        feat = model.preprocessor.featurizer
+        old_dec, old_dither, old_pad = copy.deepcopy(model.cfg.decoding), feat.dither, feat.pad_to
+        fd, path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        try:
+            sf.write(path, audio, 16000, subtype="PCM_16")
+            feat.dither, feat.pad_to = 0.0, 0
+            dec = copy.deepcopy(old_dec)
+            with open_dict(dec):
+                dec.strategy = "greedy_batch"
+                dec.preserve_alignments = False  # per-step logits for 30 min blow up host RAM; token frames are enough
+                dec.compute_timestamps = True
+                dec.fused_batch_size = -1
+                dec.greedy.use_cuda_graph_decoder = False
+            model.change_decoding_strategy(dec, verbose=False)
+            stride = float(model.cfg.preprocessor.window_stride) * 8
+            tpc = math.ceil(BUF_CHUNK / stride)
+            delay = math.ceil((BUF_CHUNK + (BUF_TOTAL - BUF_CHUNK) / 2) / stride)
+            asr = Timed(model, frame_len=BUF_CHUNK, total_buffer=BUF_TOTAL, batch_size=1, stateful_decoding=False)
+            asr.reset()
+            asr.read_audio_file([path], delay, stride)
+            with torch.inference_mode():
+                toks = asr.tokens(tpc, delay, int(round(BUF_TOTAL / stride)), stride)
+            pieces = model.tokenizer.ids_to_tokens([t for t, _ in toks])
+            del asr
+        finally:
+            os.unlink(path)
+            feat.dither, feat.pad_to = old_dither, old_pad
+            model.change_decoding_strategy(old_dec, verbose=False)
+            if DEVICE == "cuda":
+                torch.cuda.empty_cache()
+
+    words = []
+    for piece, (_, sec) in zip(pieces, toks):
+        if piece.startswith("\u2581") or not words:
+            words.append({"word": piece.lstrip("\u2581"), "start": sec, "end": sec + stride})
+        else:
+            words[-1]["word"] += piece
+            words[-1]["end"] = sec + stride
+    for w, nxt in zip(words, words[1:]):
+        w["end"] = min(w["end"], nxt["start"])
+    for w in words:
+        w["start"], w["end"] = round(max(w["start"], 0.0), 3), round(max(w["end"], 0.0), 3)
+
+    segs, cur = [], []  # segments end at sentence punctuation, as NeMo's own segment timestamps do
+    for w in words:
+        cur.append(w)
+        if w["word"][-1:] in ".?!":
+            segs.append(cur)
+            cur = []
+    if cur:
+        segs.append(cur)
+    return [{"start": g[0]["start"], "end": g[-1]["end"], "text": " ".join(w["word"] for w in g), "words": g}
+            for g in segs]
+
+
+def transcribe(audio):
+    if len(audio) / 16000 > BUFFERED_AFTER:
+        return _transcribe_buffered(audio)
+    return _transcribe_full(audio)
